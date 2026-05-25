@@ -1,62 +1,72 @@
 #!/bin/bash
 # @Author: Alan Huang
-# @Date:   2020-12-26 09:56:57
-# @Last Modified by:   Alan Huang
-# @Last Modified time: 2020-12-26 11:06:31
 # @E-mail: cmrhyq@163.com
-# @Description: 此脚本用于每个月自动更新kibana索引
-#   操作类型分为add和delete
-#   每月1号凌晨3点执行
-#   所有elasticsearch中的索引写入type_log.txt文件中，
-#   然后顺序取出并创建kibana索引。如果新增索引，
-#   可直接写入type_log.txt并执行脚本即可。
-#   对已经存在的索引不会存在影响。
+# @Description: 每月自动创建/删除Kibana索引
+# @Usage: ./createIndexForKibana.sh [add|del] [date]
+#   action - 操作类型: add(创建) 或 del(删除)，默认 add
+#   date   - 目标月份，格式 YYYY-MM，默认当前月份
+# @Note: 索引名从 type_log.txt 文件中读取，每行一个索引类型名
 
-# add or del
-action=add
-logst_url='/mnt/remote/data/elastic/logstash_02/script'
+set -euo pipefail
 
-URL="http://localhost:5601"
-# 每当有新的,从type_log.txt文件中读取所有索引的type
-# index_pattern = ""
-# ID=index_pattern
-domain_name_file=${logst_url}/type_log.txt
+readonly ACTION="${1:-add}"
+readonly DATE="${2:-$(date +%Y-%m)}"
+readonly SCRIPT_DIR="${3:-/mnt/remote/data/elastic/logstash_02/script}"
+readonly KIBANA_URL="http://localhost:5601"
+readonly DOMAIN_FILE="${SCRIPT_DIR}/type_log.txt"
+readonly LOG_FILE="${SCRIPT_DIR}/update_index.log"
+readonly MIDDLE_FILE="${SCRIPT_DIR}/middle.txt"
 
-time_field='@timestamp'
-#date=`date +%Y-%m`
-date=2022-06
+if [ ! -f "$DOMAIN_FILE" ]; then
+    echo "ERROR: Domain name file not found: $DOMAIN_FILE"
+    exit 1
+fi
 
-# 更新日志
-log_file=${logst_url}/update_index.log
-echo "${date}" >>${log_file}
+echo "[$(date +'%F %T')] Action: ${ACTION}, Date: ${DATE}" >> "$LOG_FILE"
 
-#中间文件，用来存放type_log.txt中有用的行和其行号
-middle_file=${logst_url}/middle.txt
-grep -E -n '^[[:alnum:]]' ${domain_name_file} >${middle_file}
+grep -E -n '^[[:alnum:]]' "$DOMAIN_FILE" > "$MIDDLE_FILE"
+readonly TOTAL=$(wc -l < "$MIDDLE_FILE")
 
-domain_name_num=$(wc -l ${middle_file} | awk '{print $1}')
-for ((i = 1; i <= ${domain_name_num}; i++)); do
-  domain_name_type=$(sed -n "${i}p" ${middle_file} | awk -F':' '{print $2}')
-  ###开始新增新的索引
-  if [ $action == "add" ]; then
-    curl -f -XPOST -H 'Content-Type: application/json' -H 'kbn-xsrf: anything' \
-      "${URL}/api/saved_objects/index-pattern/logstash-app_${domain_name_type}_${date}" -d"{\"attributes\":{\"title\":\"logstash-app_${domain_name_type}_${date}\",\"timeFieldName\":\"@timestamp\"}}" >>${log_file}
-  elif [ $action == "del" ]; then
-    curl -XDELETE "${URL}/api/saved_objects/index-pattern/logstash-app_${domain_name_type}_${date}" -H 'kbn-xsrf: true' >/dev/null
-  else
-    echo "action errror" >>${log_file}
-    exit 100
-  fi
+if [ "$TOTAL" -eq 0 ]; then
+    echo "No index types found in $DOMAIN_FILE"
+    exit 0
+fi
 
-  #对每一条操作都进行日志记录，这样每月凌晨执行完成后，可过滤日志文件，将错误发送给集群负责人。
-  if [ $? -eq 0 ]; then
-    echo "success ${domain_name_type}" >>${log_file}
-  else
-    echo "error ${domain_name_type}" >>${log_file}
-  fi
+success_count=0
+error_count=0
+
+for ((i = 1; i <= TOTAL; i++)); do
+    domain_type=$(sed -n "${i}p" "$MIDDLE_FILE" | awk -F':' '{print $2}')
+
+    if [ "$ACTION" == "add" ]; then
+        if curl -sf -XPOST -H 'Content-Type: application/json' -H 'kbn-xsrf: anything' \
+            "${KIBANA_URL}/api/saved_objects/index-pattern/logstash-app_${domain_type}_${DATE}" \
+            -d "{\"attributes\":{\"title\":\"logstash-app_${domain_type}_${DATE}\",\"timeFieldName\":\"@timestamp\"}}" >> "$LOG_FILE" 2>&1; then
+            ((success_count++))
+        else
+            ((error_count++))
+            echo "error ${domain_type}" >> "$LOG_FILE"
+        fi
+    elif [ "$ACTION" == "del" ]; then
+        if curl -sf -XDELETE "${KIBANA_URL}/api/saved_objects/index-pattern/logstash-app_${domain_type}_${DATE}" \
+            -H 'kbn-xsrf: true' >> "$LOG_FILE" 2>&1; then
+            ((success_count++))
+        else
+            ((error_count++))
+            echo "error ${domain_type}" >> "$LOG_FILE"
+        fi
+    else
+        echo "ERROR: Invalid action '${ACTION}'. Use 'add' or 'del'" | tee -a "$LOG_FILE"
+        exit 1
+    fi
 done
 
-#添加默认索引
-curl -f -XPOST -H 'Content-Type: application/json' -H 'kbn-xsrf: anything' ${URL}/api/kibana/settings/defaultIndex -d "{\"value\":\"logstash-app_www_${date}\"}" >>${log_file}
+if [ "$ACTION" == "add" ]; then
+    curl -sf -XPOST -H 'Content-Type: application/json' -H 'kbn-xsrf: anything' \
+        "${KIBANA_URL}/api/kibana/settings/defaultIndex" \
+        -d "{\"value\":\"logstash-app_www_${DATE}\"}" >> "$LOG_FILE" 2>&1
+fi
 
-mv -f ${logst_url}/middle.txt /tmp/
+rm -f "$MIDDLE_FILE"
+
+echo "[$(date +'%F %T')] Completed: ${success_count} success, ${error_count} errors" | tee -a "$LOG_FILE"

@@ -1,9 +1,17 @@
 #!/bin/bash
 # @Author: Alan Huang
-# @Date:   2020-12-26 09:56:57
-# @Last Modified by:   Alan Huang
-# @Last Modified time: 2020-12-26 11:06:31
 # @E-mail: cmrhyq@163.com
-# @Description: timing request website
+# @Description: 定时请求网站保持VPN连接活跃
+# @Usage: 添加到crontab: */5 * * * * /path/to/timingRequest.sh
 
-curl --cacert ~/script/timer/R3.ca https://10.21.0.5:8001/portal/
+set -euo pipefail
+
+readonly CERT_PATH="${HOME}/script/timer/R3.ca"
+readonly TARGET_URL="https://10.21.0.5:8001/portal/"
+
+if [ ! -f "$CERT_PATH" ]; then
+    echo "ERROR: Certificate not found: $CERT_PATH"
+    exit 1
+fi
+
+curl --silent --cacert "$CERT_PATH" "$TARGET_URL" > /dev/null 2>&1

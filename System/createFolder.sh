@@ -1,19 +1,30 @@
 #!/bin/bash
 # @Author: Alan Huang
-# @Date:   2020-12-26 09:56:57
-# @Last Modified by:   Alan Huang
-# @Last Modified time: 2020-12-26 11:06:31
 # @E-mail: cmrhyq@163.com
-# @Description: 构架xxl-job docker镜像
+# @Description: 批量创建带子目录结构的文件夹
+# @Usage: ./createFolder.sh <path> <prefix>
+#   path   - 父目录路径
+#   prefix - 文件夹名前缀
 
-path=${1}
-prefix=${2}
-dic=(
-    [1]='100' 
-    [2]='200'
-    [3]='300'
-    )
+set -euo pipefail
 
-for names in $(echo ${!dic[*]}); do
-    mkdir ${path}/${prefix}-${names} && cd ${path}/${prefix}-${names} && mkdir in out err
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 <path> <prefix>"
+    echo "Example: $0 /opt/apps executor"
+    exit 1
+fi
+
+readonly BASE_PATH="${1}"
+readonly PREFIX="${2}"
+readonly SUFFIXES=("100" "200" "300")
+
+if [ ! -d "$BASE_PATH" ]; then
+    echo "ERROR: Directory does not exist: $BASE_PATH"
+    exit 1
+fi
+
+for suffix in "${SUFFIXES[@]}"; do
+    dir="${BASE_PATH}/${PREFIX}-${suffix}"
+    mkdir -p "${dir}/in" "${dir}/out" "${dir}/err"
+    echo "Created: ${dir}/{in,out,err}"
 done

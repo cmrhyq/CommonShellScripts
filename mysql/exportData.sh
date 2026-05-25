@@ -1,25 +1,44 @@
 #!/bin/bash
 # @Author: Alan Huang
-# @Date:   2020-12-26 09:56:57
-# @Last Modified by:   Alan Huang
-# @Last Modified time: 2020-12-26 11:06:31
 # @E-mail: cmrhyq@163.com
-# @Description: 导出mysql表数据，dic中配置要导出的表，
-#               导出命令：./importData.sh mysql用户名 mysql密码
+# @Description: 批量导出MySQL数据库表数据
+# @Usage: ./exportData.sh <username> <password>
+#   username - MySQL用户名
+#   password - MySQL密码
+
+set -euo pipefail
+
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 <username> <password>"
+    echo "Example: $0 root mypassword"
+    exit 1
+fi
+
+readonly USERNAME="${1}"
+readonly PASSWORD="${2}"
+readonly EXPORT_DIR="/var/lib/mysql"
 
 dic=(
-    [1]='ApolloConfigDB' 
-    [2]='ApolloPortalDB'
-    [3]='hfish'
-    [4]='nacos_config'
-    [5]='store'
-    [6]='store_dev'
-    [7]='xxl_job'
-    )
-useranme=${1}
+    'ApolloConfigDB'
+    'ApolloPortalDB'
+    'hfish'
+    'nacos_config'
+    'store'
+    'store_dev'
+    'xxl_job'
+)
 
-for dbname in ${dic[@]}; do
-    echo Export ${dbname} table data
-    mysqldump --databases ${dbname} > /var/lib/mysql/${dbname}.sql -u${username} -p
-    echo End of exporting ${dbname} table data 
+log() {
+    echo "[$(date +'%F %T')] $*"
+}
+
+for dbname in "${dic[@]}"; do
+    log "Exporting ${dbname} ..."
+    if mysqldump --databases "${dbname}" -u"${USERNAME}" -p"${PASSWORD}" > "${EXPORT_DIR}/${dbname}.sql" 2>/dev/null; then
+        log "Export ${dbname} succeeded"
+    else
+        log "ERROR: Export ${dbname} failed"
+    fi
 done
+
+log "All exports completed"
